@@ -15,6 +15,14 @@ pio run -e rejsacan -t upload # build and flash the board
 pio device monitor            # 115200 baud
 ```
 
+The Python tools under `tools/` have their own environment, managed by
+[uv](https://docs.astral.sh/uv/):
+
+```sh
+uv sync                       # create .venv from pyproject.toml
+uv run pytest                 # 156 tests for did_scan.py and didscan_core.py
+```
+
 Four environments:
 
 | Environment | Purpose |

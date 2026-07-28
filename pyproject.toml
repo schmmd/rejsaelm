@@ -1,0 +1,21 @@
+[project]
+name = "rejsaelm-tools"
+version = "0.1.0"
+description = "Host-side tools for the RejsaElm firmware (tools/did_scan.py)"
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+# tools/ holds standalone scripts, not an installable package.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tools"]
+pythonpath = ["tools"]
