@@ -291,6 +291,33 @@ void test_extended_addressing_is_set_and_cleared() {
     TEST_ASSERT_FALSE(s.extendedAddressing);
 }
 
+void test_buffer_dump_renders_the_last_received_frame() {
+    AdapterState s;
+    // Nothing received yet — there is no buffer to dump.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATBD", s));
+
+    s.lastFrame.valid = true;
+    s.lastFrame.dlc = 8;
+    const uint8_t data[8] = {0x03, 0x41, 0x0C, 0x1A, 0xF8, 0x00, 0x00, 0x00};
+    std::memcpy(s.lastFrame.data, data, 8);
+
+    TEST_ASSERT_EQUAL(AtResult::BufferDump, applyAtCommand("ATBD", s));
+    // Length first, then the bytes — the ELM327 rendering.
+    TEST_ASSERT_EQUAL_STRING("08 03 41 0C 1A F8 00 00 00",
+                             formatBufferDump(s).c_str());
+}
+
+void test_buffer_dump_honours_the_frame_length() {
+    AdapterState s;
+    s.lastFrame.valid = true;
+    s.lastFrame.dlc = 3;
+    const uint8_t data[8] = {0xAA, 0xBB, 0xCC, 0, 0, 0, 0, 0};
+    std::memcpy(s.lastFrame.data, data, 8);
+    // Bytes beyond the DLC are not part of the frame and must not be printed
+    // as though the ECU sent them.
+    TEST_ASSERT_EQUAL_STRING("03 AA BB CC", formatBufferDump(s).c_str());
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
@@ -317,5 +344,7 @@ int main(int, char**) {
     RUN_TEST(test_request_shaping_flags_are_stored);
     RUN_TEST(test_byte_valued_commands_reject_out_of_range_and_garbage);
     RUN_TEST(test_extended_addressing_is_set_and_cleared);
+    RUN_TEST(test_buffer_dump_renders_the_last_received_frame);
+    RUN_TEST(test_buffer_dump_honours_the_frame_length);
     return UNITY_END();
 }

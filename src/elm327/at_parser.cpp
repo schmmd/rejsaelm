@@ -1,5 +1,6 @@
 #include "elm327/at_parser.h"
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -159,6 +160,10 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
         return AtResult::Ok;
     }
 
+    if (s == "ATBD") {
+        return state.lastFrame.valid ? AtResult::BufferDump : AtResult::Unknown;
+    }
+
     // Commands whose behaviour we always get right internally. Accepting them
     // is friendlier than '?', which makes clients think the adapter is broken.
     if (startsWith(s, "ATAT") || startsWith(s, "ATFC") ||
@@ -180,5 +185,19 @@ std::string describeProtocol(const AdapterState& state) {
 std::string describeProtocolNumber(const AdapterState& state) {
     std::string out = state.autoSelected ? "A" : "";
     out += static_cast<char>('0' + state.protocol);
+    return out;
+}
+
+std::string formatBufferDump(const AdapterState& state) {
+    char buf[4];
+    std::snprintf(buf, sizeof(buf), "%02X", state.lastFrame.dlc);
+    std::string out = buf;
+    // Only up to the DLC: the tail of the array is whatever was there before,
+    // not something the ECU sent.
+    for (uint8_t i = 0; i < state.lastFrame.dlc && i < 8; ++i) {
+        std::snprintf(buf, sizeof(buf), "%02X", state.lastFrame.data[i]);
+        out += ' ';
+        out += buf;
+    }
     return out;
 }

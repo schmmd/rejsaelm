@@ -33,6 +33,16 @@ constexpr uint16_t kMaxTimeoutMs = 65535;
 // `timeoutMs` (ATST, the response deadline).
 // `autoFormat` (ATCAF) is structural: this firmware only ever does ISO-TP
 // assembly, which is what ATCAF1 means, and ATCAF0 is stored but not honoured.
+// The most recent frame accepted by the session, kept solely so ATBD has
+// something to report. One frame, not the whole sequence: ATBD dumps a buffer,
+// and retaining a full multi-frame response would be the frame-retention work
+// that real ATH1 support needs and this phase deliberately does not do.
+struct ReceivedFrame {
+    bool valid = false;
+    uint8_t dlc = 0;
+    uint8_t data[8] = {};
+};
+
 struct AdapterState {
     bool echo = true;        // ATE1
     bool spaces = true;      // ATS1
@@ -70,6 +80,8 @@ struct AdapterState {
     // data byte of every frame, so the usable payload drops to 6.
     bool extendedAddressing = false;
     uint8_t extendedAddress = 0;
+
+    ReceivedFrame lastFrame;
 };
 
 // What the caller must do after the command has been applied.
@@ -83,6 +95,7 @@ enum class AtResult {
     DeviceIdentifier,   // @2 — answer with state.identifier
     DescribeProtocol,        // ATDP  — answer with describeProtocol(state)
     DescribeProtocolNumber,  // ATDPN — answer with describeProtocolNumber(state)
+    BufferDump,  // ATBD — answer with formatBufferDump(state)
 };
 
 bool isAtCommand(const char* line);
@@ -92,3 +105,6 @@ AtResult applyAtCommand(const char* line, AdapterState& state);
 // rather than living as string literals inside session.cpp.
 std::string describeProtocol(const AdapterState& state);
 std::string describeProtocolNumber(const AdapterState& state);
+
+// ATBD rendering: DLC first, then that many data bytes, all space-separated.
+std::string formatBufferDump(const AdapterState& state);
