@@ -143,6 +143,15 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
         return AtResult::Ok;
     }
     // Must be tested before the harmless ATCF/ATCM/ATCRA prefix block below.
+    if (startsWith(s, "ATCEA")) {
+        // A bare ATCEA turns extended addressing off.
+        if (s == "ATCEA") { state.extendedAddressing = false; return AtResult::Ok; }
+        uint8_t v = 0;
+        if (!byteTail(s, 5, v)) return AtResult::Unknown;
+        state.extendedAddressing = true;
+        state.extendedAddress = v;
+        return AtResult::Ok;
+    }
     if (startsWith(s, "ATCP")) {
         uint8_t v = 0;
         if (!byteTail(s, 4, v)) return AtResult::Unknown;

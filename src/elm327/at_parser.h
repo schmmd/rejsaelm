@@ -65,6 +65,11 @@ struct AdapterState {
     bool allowLong = false;
     uint8_t testerAddress = 0xF9;  // ATTA — the conventional OBD tester address
     uint8_t priorityBits = 0x18;   // ATCP — 29-bit ID priority, phase 3
+
+    // ATCEA — CAN extended addressing. The address byte occupies the first
+    // data byte of every frame, so the usable payload drops to 6.
+    bool extendedAddressing = false;
+    uint8_t extendedAddress = 0;
 };
 
 // What the caller must do after the command has been applied.

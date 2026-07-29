@@ -280,6 +280,17 @@ void test_byte_valued_commands_reject_out_of_range_and_garbage() {
     TEST_ASSERT_EQUAL_UINT8(ta, s.testerAddress);
 }
 
+void test_extended_addressing_is_set_and_cleared() {
+    AdapterState s;
+    TEST_ASSERT_FALSE(s.extendedAddressing);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCEA F1", s));
+    TEST_ASSERT_TRUE(s.extendedAddressing);
+    TEST_ASSERT_EQUAL_UINT8(0xF1, s.extendedAddress);
+    // A bare ATCEA turns extended addressing back off.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCEA", s));
+    TEST_ASSERT_FALSE(s.extendedAddressing);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
@@ -305,5 +316,6 @@ int main(int, char**) {
     RUN_TEST(test_reset_clears_the_device_identifier);
     RUN_TEST(test_request_shaping_flags_are_stored);
     RUN_TEST(test_byte_valued_commands_reject_out_of_range_and_garbage);
+    RUN_TEST(test_extended_addressing_is_set_and_cleared);
     return UNITY_END();
 }

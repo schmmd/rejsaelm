@@ -146,6 +146,40 @@ void test_flow_control_frame_grants_everything_with_no_delay() {
     TEST_ASSERT_EQUAL_UINT8(0x00, frame[2]);  // STmin 0 = no inter-frame delay
 }
 
+void test_extended_addressing_prepends_the_address_byte() {
+    uint8_t out[8] = {};
+    const uint8_t payload[] = {0x22, 0x01, 0x01};
+    TEST_ASSERT_TRUE(buildSingleFrameRequest(payload, 3, out, true, 0xF1));
+    // Address byte, then the normal single-frame PCI and payload.
+    TEST_ASSERT_EQUAL_UINT8(0xF1, out[0]);
+    TEST_ASSERT_EQUAL_UINT8(0x03, out[1]);
+    TEST_ASSERT_EQUAL_UINT8(0x22, out[2]);
+    TEST_ASSERT_EQUAL_UINT8(0x01, out[3]);
+    TEST_ASSERT_EQUAL_UINT8(0x01, out[4]);
+}
+
+void test_extended_addressing_costs_one_byte_of_payload() {
+    uint8_t out[8] = {};
+    const uint8_t seven[] = {1, 2, 3, 4, 5, 6, 7};
+    // Seven bytes fit normally...
+    TEST_ASSERT_TRUE(buildSingleFrameRequest(seven, 7, out));
+    // ...but not once an address byte is taking a slot. Truncating here would
+    // send a shorter request than the client asked for, and the reply would
+    // decode as a different DID.
+    TEST_ASSERT_FALSE(buildSingleFrameRequest(seven, 7, out, true, 0xF1));
+    const uint8_t six[] = {1, 2, 3, 4, 5, 6};
+    TEST_ASSERT_TRUE(buildSingleFrameRequest(six, 6, out, true, 0xF1));
+}
+
+void test_default_arguments_leave_existing_behaviour_unchanged() {
+    uint8_t with_defaults[8] = {};
+    uint8_t explicit_off[8] = {};
+    const uint8_t payload[] = {0x22, 0x01, 0x01};
+    TEST_ASSERT_TRUE(buildSingleFrameRequest(payload, 3, with_defaults));
+    TEST_ASSERT_TRUE(buildSingleFrameRequest(payload, 3, explicit_off, false, 0));
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(with_defaults, explicit_off, 8);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_single_frame_completes_immediately);
@@ -162,5 +196,8 @@ int main(int, char**) {
     RUN_TEST(test_request_longer_than_seven_bytes_is_rejected);
     RUN_TEST(test_empty_request_is_rejected);
     RUN_TEST(test_flow_control_frame_grants_everything_with_no_delay);
+    RUN_TEST(test_extended_addressing_prepends_the_address_byte);
+    RUN_TEST(test_extended_addressing_costs_one_byte_of_payload);
+    RUN_TEST(test_default_arguments_leave_existing_behaviour_unchanged);
     return UNITY_END();
 }
