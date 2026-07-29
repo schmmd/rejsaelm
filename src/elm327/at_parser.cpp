@@ -107,11 +107,18 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
 
     if (startsWith(s, "ATSP")) {
         // We speak exactly one protocol: ISO 15765-4 CAN, 11-bit, 500 kbit/s
-        // (protocol 6). Accept 6 and auto (0); reject anything else rather
-        // than pretending to support a bus we cannot drive.
-        if (s == "ATSP6" || s == "ATSP0" || s == "ATSPA6") return AtResult::Ok;
+        // (protocol 6). Phase 3 adds 7/8/9. Anything else is rejected rather
+        // than accepted and silently not driven.
+        if (s == "ATSP6")   { state.protocol = 6; state.autoSelected = false; return AtResult::Ok; }
+        if (s == "ATSP0")   { state.protocol = 6; state.autoSelected = true;  return AtResult::Ok; }
+        if (s == "ATSPA6" || s == "ATSPA0") {
+            state.protocol = 6; state.autoSelected = true; return AtResult::Ok;
+        }
         return AtResult::Unknown;
     }
+
+    if (s == "ATDP")  return AtResult::DescribeProtocol;
+    if (s == "ATDPN") return AtResult::DescribeProtocolNumber;
 
     // Commands whose behaviour we always get right internally. Accepting them
     // is friendlier than '?', which makes clients think the adapter is broken.
@@ -122,4 +129,17 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
     }
 
     return AtResult::Unknown;
+}
+
+std::string describeProtocol(const AdapterState& state) {
+    // One protocol until phase 3 adds 7/8/9; a switch here then.
+    std::string out = state.autoSelected ? "AUTO, " : "";
+    out += "ISO 15765-4 (CAN 11/500)";
+    return out;
+}
+
+std::string describeProtocolNumber(const AdapterState& state) {
+    std::string out = state.autoSelected ? "A" : "";
+    out += static_cast<char>('0' + state.protocol);
+    return out;
 }

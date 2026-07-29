@@ -140,6 +140,38 @@ void test_protocol_select_is_accepted() {
     TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATSP3", s));
 }
 
+void test_describes_the_current_protocol() {
+    AdapterState s;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSP6", s));
+    TEST_ASSERT_EQUAL(AtResult::DescribeProtocol, applyAtCommand("ATDP", s));
+    TEST_ASSERT_EQUAL_STRING("ISO 15765-4 (CAN 11/500)",
+                             describeProtocol(s).c_str());
+    TEST_ASSERT_EQUAL(AtResult::DescribeProtocolNumber,
+                      applyAtCommand("ATDPN", s));
+    TEST_ASSERT_EQUAL_STRING("6", describeProtocolNumber(s).c_str());
+}
+
+void test_auto_selected_protocol_is_reported_as_auto() {
+    AdapterState s;
+    // ATSP0 asks the adapter to choose. A real ELM327 then reports the
+    // choice with an "A" marker, so a client can tell a negotiated protocol
+    // from one it pinned itself.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSP0", s));
+    TEST_ASSERT_EQUAL_STRING("AUTO, ISO 15765-4 (CAN 11/500)",
+                             describeProtocol(s).c_str());
+    TEST_ASSERT_EQUAL_STRING("A6", describeProtocolNumber(s).c_str());
+
+    // ATSPA6 is "auto, starting at 6" — also auto.
+    AdapterState a;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSPA6", a));
+    TEST_ASSERT_EQUAL_STRING("A6", describeProtocolNumber(a).c_str());
+
+    // ATSP6 pins it, so no marker.
+    AdapterState p;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSP6", p));
+    TEST_ASSERT_EQUAL_STRING("6", describeProtocolNumber(p).c_str());
+}
+
 void test_identify_and_voltage_are_distinct_results() {
     AdapterState s;
     TEST_ASSERT_EQUAL(AtResult::Identify, applyAtCommand("ATI", s));
@@ -226,6 +258,8 @@ int main(int, char**) {
     RUN_TEST(test_ignores_whitespace_and_case);
     RUN_TEST(test_reset_restores_defaults);
     RUN_TEST(test_protocol_select_is_accepted);
+    RUN_TEST(test_describes_the_current_protocol);
+    RUN_TEST(test_auto_selected_protocol_is_reported_as_auto);
     RUN_TEST(test_identify_and_voltage_are_distinct_results);
     RUN_TEST(test_unknown_command_reports_unknown);
     RUN_TEST(test_harmless_commands_are_accepted_without_effect);

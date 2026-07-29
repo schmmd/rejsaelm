@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 
 // ATST bounds, in milliseconds.
 //
@@ -47,6 +48,14 @@ struct AdapterState {
     // A char array rather than std::string keeps AdapterState trivially
     // assignable, which is what makes `state = AdapterState{}` a valid reset.
     char identifier[13] = {};
+
+    // ATSP — the selected protocol number. Only 6 (ISO 15765-4, CAN 11-bit,
+    // 500 kbit/s) is selectable until phase 3 adds 7/8/9.
+    uint8_t protocol = 6;
+    // True when the client asked the adapter to choose (ATSP0 / ATSPAn)
+    // rather than pinning one. ATDP/ATDPN mark this, so a client can tell a
+    // negotiated protocol from one it set itself.
+    bool autoSelected = false;
 };
 
 // What the caller must do after the command has been applied.
@@ -58,7 +67,14 @@ enum class AtResult {
     Voltage,   // answer with the measured supply voltage
     DeviceDescription,  // @1 — answer with the device description
     DeviceIdentifier,   // @2 — answer with state.identifier
+    DescribeProtocol,        // ATDP  — answer with describeProtocol(state)
+    DescribeProtocolNumber,  // ATDPN — answer with describeProtocolNumber(state)
 };
 
 bool isAtCommand(const char* line);
 AtResult applyAtCommand(const char* line, AdapterState& state);
+
+// ATDP / ATDPN renderings. Pure functions of the state so they are host-tested
+// rather than living as string literals inside session.cpp.
+std::string describeProtocol(const AdapterState& state);
+std::string describeProtocolNumber(const AdapterState& state);
