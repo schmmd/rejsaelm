@@ -32,19 +32,20 @@ bool hexTail(const std::string& s, size_t from, uint32_t& value) {
 
 bool isAtCommand(const char* line) {
     std::string s = canonical(line);
-    return startsWith(s, "AT");
+    // '@' commands (@1/@2/@3) carry no AT prefix — see applyAtCommand.
+    return startsWith(s, "AT") || startsWith(s, "@");
 }
 
 AtResult applyAtCommand(const char* line, AdapterState& state) {
     std::string s = canonical(line);
-    if (!startsWith(s, "AT")) return AtResult::Unknown;
+    if (!startsWith(s, "AT") && !startsWith(s, "@")) return AtResult::Unknown;
 
     if (s == "ATZ" || s == "ATWS") {
         state = AdapterState{};
         return AtResult::Reset;
     }
     if (s == "ATD") { state = AdapterState{}; return AtResult::Ok; }
-    if (s == "ATI" || s == "AT@1") return AtResult::Identify;
+    if (s == "ATI") return AtResult::Identify;
     if (s == "ATRV") return AtResult::Voltage;
 
     if (s == "ATE0") { state.echo = false; return AtResult::Ok; }

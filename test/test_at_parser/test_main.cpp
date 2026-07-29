@@ -22,6 +22,18 @@ void test_recognises_at_prefix() {
     TEST_ASSERT_FALSE(isAtCommand("220101"));
 }
 
+void test_recognises_the_at_sign_command_prefix() {
+    // @1/@2/@3 are ELM327 commands with no AT prefix. Without this, "@1"
+    // falls through to runRequest(), fails hex parsing, and answers '?' —
+    // which looks to a client exactly like an unsupported command.
+    TEST_ASSERT_TRUE(isAtCommand("@1"));
+    TEST_ASSERT_TRUE(isAtCommand("@2"));
+    TEST_ASSERT_TRUE(isAtCommand(" @3 ABCDEF012345"));
+    // A hex request line still must not be mistaken for a command.
+    TEST_ASSERT_FALSE(isAtCommand("0100"));
+    TEST_ASSERT_FALSE(isAtCommand("220101"));
+}
+
 void test_toggles_echo_spaces_headers_linefeeds() {
     AdapterState s;
     TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATE0", s));
@@ -172,6 +184,7 @@ int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
     RUN_TEST(test_recognises_at_prefix);
+    RUN_TEST(test_recognises_the_at_sign_command_prefix);
     RUN_TEST(test_toggles_echo_spaces_headers_linefeeds);
     RUN_TEST(test_sets_header_from_atsh);
     RUN_TEST(test_sets_timeout_from_atst_in_four_ms_units);
