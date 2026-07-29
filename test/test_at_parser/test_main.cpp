@@ -360,6 +360,28 @@ void test_reset_clears_the_buffer_dump() {
     TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATBD", s));
 }
 
+void test_commands_for_buses_this_board_cannot_drive_are_refused() {
+    // These serve J1850, ISO 9141 and ISO 14230 — protocols with no
+    // electrical path on a CAN-only board. Answering OK would leave a client
+    // waiting on a bus that will never reply, which is a worse failure than
+    // an honest '?'. Phase 4 moves the J1939 entries out of this list.
+    const char* refused[] = {
+        "ATIB10", "ATIB96", "ATFI", "ATSI", "ATKW0", "ATKW1", "ATBI",
+        "ATSW20", "ATWM8106F1", "ATSP1", "ATSP2", "ATSP3", "ATSP4", "ATSP5",
+        "ATJE", "ATJS", "ATJHF0", "ATJHF1", "ATJTM1", "ATJTM5",
+        "ATMP1234", "ATDM1",
+    };
+    for (const char* command : refused) {
+        AdapterState s;
+        const AdapterState before = s;
+        TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand(command, s));
+        // A refusal must also not have moved anything on the way out.
+        TEST_ASSERT_EQUAL_UINT16(before.header, s.header);
+        TEST_ASSERT_EQUAL_UINT16(before.timeoutMs, s.timeoutMs);
+        TEST_ASSERT_EQUAL_UINT8(before.protocol, s.protocol);
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
@@ -392,5 +414,6 @@ int main(int, char**) {
     RUN_TEST(test_buffer_dump_renders_the_last_received_frame);
     RUN_TEST(test_buffer_dump_honours_the_frame_length);
     RUN_TEST(test_reset_clears_the_buffer_dump);
+    RUN_TEST(test_commands_for_buses_this_board_cannot_drive_are_refused);
     return UNITY_END();
 }
