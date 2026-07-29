@@ -216,3 +216,43 @@ addressing decode and transport reassembler in phase 4. Phases 2, 3 and the
 monitor modes are not, and their entries belong in
 `tools/bringup_checklist.md`. Phase 4 additionally cannot be exercised on the
 vehicle on hand at all — see above.
+
+## Carried forward from phase 1
+
+Phase 1 shipped in twelve commits. Four things were found during its review and
+deliberately not fixed there; they are recorded here so phase 3 inherits them
+rather than rediscovering them.
+
+**`ATCEA` works for single-frame replies only.** The receive path strips the
+extended-addressing address byte, but `buildFlowControlFrame()` has no
+extended-addressing parameter, so the flow-control frame sent back carries
+`0x30` where the address byte belongs. The ECU reads that as the address,
+ignores the flow control, and a multi-frame reply times out to `NO DATA`.
+Fixing it means giving that function the same treatment
+`buildSingleFrameRequest()` already got. Not a regression — `ATCEA` did not
+work at all before phase 1 — and unverifiable either way without an
+extended-addressing ECU.
+
+**`describeProtocolNumber()` breaks above protocol 9.** It builds its digit as
+`'0' + protocol`, which is right for 1-9 and wrong from 10 up. ELM327 numbers
+protocols past 9 as A, B, C — and J1939, which phase 4 brings into scope, is
+protocol A. `ATDPN` would answer `:` instead of `A`. Unreachable today because
+only protocol 6 is selectable; it becomes wrong the moment phase 3 widens the
+`ATSP` branch.
+
+**A stale first frame can draw a flow-control frame for someone else's
+response.** In `runRequest()`, a first frame reaches `NeedFlowControl` before
+`classifyResponse()` ever runs, so the adapter answers flow control for a
+multi-frame reply that is not its own. Pre-existing, and it belongs with phase
+3's rewrite of the correlation logic, which is where that ordering is already
+being reconsidered.
+
+**`@3` skips only spaces, not tabs.** `canonical()` uses `std::isspace`, the
+raw-line parse in the `@3` branch does not, so `@3\tRejsaElm0001` is rejected.
+A one-word fix if a client is ever found that sends it.
+
+The one defect found during phase 1's review that was NOT deferred is worth
+naming too, since it was pre-existing and unrelated to the phase:
+`IsoTpReassembler::offer()` trusted its `len` argument and read past the
+8-byte frame buffer on a malformed DLC of 9-15. Fixed in `7385f25` with tests
+that crash the unfixed binary.

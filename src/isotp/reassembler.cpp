@@ -10,6 +10,11 @@ void IsoTpReassembler::reset() {
 IsoTpState IsoTpReassembler::offer(const uint8_t* frame, size_t len) {
     if (len < 1) return IsoTpState::Error;
 
+    // len comes from a hardware DLC register on a bus we don't control; a
+    // malformed frame can report up to 15. Clamp to the real max frame size
+    // (8) so a bogus DLC can never make us read past the caller's buffer.
+    if (len > 8) len = 8;
+
     const uint8_t type = frame[0] >> 4;
 
     if (type == 0x0) {  // single frame

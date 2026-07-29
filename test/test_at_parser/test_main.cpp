@@ -22,6 +22,18 @@ void test_recognises_at_prefix() {
     TEST_ASSERT_FALSE(isAtCommand("220101"));
 }
 
+void test_recognises_the_at_sign_command_prefix() {
+    // @1/@2/@3 are ELM327 commands with no AT prefix. Without this, "@1"
+    // falls through to runRequest(), fails hex parsing, and answers '?' —
+    // which looks to a client exactly like an unsupported command.
+    TEST_ASSERT_TRUE(isAtCommand("@1"));
+    TEST_ASSERT_TRUE(isAtCommand("@2"));
+    TEST_ASSERT_TRUE(isAtCommand(" @3 ABCDEF012345"));
+    // A hex request line still must not be mistaken for a command.
+    TEST_ASSERT_FALSE(isAtCommand("0100"));
+    TEST_ASSERT_FALSE(isAtCommand("220101"));
+}
+
 void test_toggles_echo_spaces_headers_linefeeds() {
     AdapterState s;
     TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATE0", s));
@@ -128,6 +140,38 @@ void test_protocol_select_is_accepted() {
     TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATSP3", s));
 }
 
+void test_describes_the_current_protocol() {
+    AdapterState s;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSP6", s));
+    TEST_ASSERT_EQUAL(AtResult::DescribeProtocol, applyAtCommand("ATDP", s));
+    TEST_ASSERT_EQUAL_STRING("ISO 15765-4 (CAN 11/500)",
+                             describeProtocol(s).c_str());
+    TEST_ASSERT_EQUAL(AtResult::DescribeProtocolNumber,
+                      applyAtCommand("ATDPN", s));
+    TEST_ASSERT_EQUAL_STRING("6", describeProtocolNumber(s).c_str());
+}
+
+void test_auto_selected_protocol_is_reported_as_auto() {
+    AdapterState s;
+    // ATSP0 asks the adapter to choose. A real ELM327 then reports the
+    // choice with an "A" marker, so a client can tell a negotiated protocol
+    // from one it pinned itself.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSP0", s));
+    TEST_ASSERT_EQUAL_STRING("AUTO, ISO 15765-4 (CAN 11/500)",
+                             describeProtocol(s).c_str());
+    TEST_ASSERT_EQUAL_STRING("A6", describeProtocolNumber(s).c_str());
+
+    // ATSPA6 is "auto, starting at 6" — also auto.
+    AdapterState a;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSPA6", a));
+    TEST_ASSERT_EQUAL_STRING("A6", describeProtocolNumber(a).c_str());
+
+    // ATSP6 pins it, so no marker.
+    AdapterState p;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATSP6", p));
+    TEST_ASSERT_EQUAL_STRING("6", describeProtocolNumber(p).c_str());
+}
+
 void test_identify_and_voltage_are_distinct_results() {
     AdapterState s;
     TEST_ASSERT_EQUAL(AtResult::Identify, applyAtCommand("ATI", s));
@@ -137,6 +181,30 @@ void test_identify_and_voltage_are_distinct_results() {
 void test_unknown_command_reports_unknown() {
     AdapterState s;
     TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATXYZZY", s));
+}
+
+void test_monitor_commands_report_no_data_until_phase_four() {
+    AdapterState s;
+    // Streaming monitor modes arrive in phase 4. Until then answer at once
+    // rather than making the client wait out a timeout. NO DATA is the
+    // honest answer: nothing was captured.
+    TEST_ASSERT_EQUAL(AtResult::NoData, applyAtCommand("ATMA", s));
+    TEST_ASSERT_EQUAL(AtResult::NoData, applyAtCommand("ATMR 7E8", s));
+    TEST_ASSERT_EQUAL(AtResult::NoData, applyAtCommand("ATMT 7E0", s));
+}
+
+void test_protocol_close_is_accepted() {
+    AdapterState s;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATPC", s));
+}
+
+void test_j1939_monitor_commands_are_not_swallowed_by_the_can_monitor_stubs() {
+    // ATMP (monitor for PGN) and ATDM1 are J1939 commands deferred to a later
+    // phase. ATMP shares the "ATM" prefix with ATMA/ATMR/ATMT, which answer
+    // NO DATA — pin that ATMP falls through to Unknown instead of being
+    // swallowed by that match.
+    AdapterState s;
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATMP1234", s));
 }
 
 void test_harmless_commands_are_accepted_without_effect() {
@@ -168,10 +236,160 @@ void test_harmless_commands_are_accepted_without_effect() {
     }
 }
 
+void test_device_identifier_round_trips_verbatim() {
+    AdapterState s;
+    // Unset, @2 has nothing to report. '?' is the honest answer, not "".
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("@2", s));
+
+    // Exactly 12 characters, stored verbatim: canonical() would uppercase
+    // and strip spaces, which is fine for commands and wrong for a payload.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("@3 RejsaElm0001", s));
+    TEST_ASSERT_EQUAL(AtResult::DeviceIdentifier, applyAtCommand("@2", s));
+    TEST_ASSERT_EQUAL_STRING("RejsaElm0001", s.identifier);
+
+    // Wrong length is rejected, and must not partially overwrite.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("@3 SHORT", s));
+    TEST_ASSERT_EQUAL_STRING("RejsaElm0001", s.identifier);
+}
+
+void test_device_description_is_not_the_version_banner() {
+    AdapterState s;
+    // @1 is a device description; ATI is the version banner. A client that
+    // probes both and gets one string twice cannot tell them apart.
+    TEST_ASSERT_EQUAL(AtResult::DeviceDescription, applyAtCommand("@1", s));
+    TEST_ASSERT_EQUAL(AtResult::Identify, applyAtCommand("ATI", s));
+}
+
+void test_reset_clears_the_device_identifier() {
+    AdapterState s;
+    applyAtCommand("@3 RejsaElm0001", s);
+    TEST_ASSERT_EQUAL(AtResult::Reset, applyAtCommand("ATZ", s));
+    TEST_ASSERT_EQUAL_STRING("", s.identifier);
+}
+
+void test_request_shaping_flags_are_stored() {
+    AdapterState s;
+    TEST_ASSERT_TRUE(s.responses);      // R1 is the default
+    TEST_ASSERT_FALSE(s.variableDlc);   // V0 is the default: always DLC 8
+
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATR0", s));
+    TEST_ASSERT_FALSE(s.responses);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATR1", s));
+    TEST_ASSERT_TRUE(s.responses);
+
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATV1", s));
+    TEST_ASSERT_TRUE(s.variableDlc);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATV0", s));
+    TEST_ASSERT_FALSE(s.variableDlc);
+
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATAL", s));
+    TEST_ASSERT_TRUE(s.allowLong);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATNL", s));
+    TEST_ASSERT_FALSE(s.allowLong);
+
+    // Non-default values: ATTA's and ATCP's defaults are 0xF9 and 0x18
+    // (at_parser.h), so asserting those back would pass even if the branches
+    // that apply them were deleted.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATTA 0F", s));
+    TEST_ASSERT_EQUAL_UINT8(0x0F, s.testerAddress);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCP1C", s));
+    TEST_ASSERT_EQUAL_UINT8(0x1C, s.priorityBits);
+}
+
+void test_byte_valued_commands_reject_out_of_range_and_garbage() {
+    AdapterState s;
+    const uint8_t ta = s.testerAddress;
+    // A value wider than one byte is not a tester address; truncating it
+    // would address something the client never named.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATTA100", s));
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATTAZZ", s));
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATTA", s));
+    TEST_ASSERT_EQUAL_UINT8(ta, s.testerAddress);
+}
+
+void test_extended_addressing_is_set_and_cleared() {
+    AdapterState s;
+    TEST_ASSERT_FALSE(s.extendedAddressing);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCEA F1", s));
+    TEST_ASSERT_TRUE(s.extendedAddressing);
+    TEST_ASSERT_EQUAL_UINT8(0xF1, s.extendedAddress);
+    // A bare ATCEA turns extended addressing back off.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCEA", s));
+    TEST_ASSERT_FALSE(s.extendedAddressing);
+}
+
+void test_buffer_dump_renders_the_last_received_frame() {
+    AdapterState s;
+    // Nothing received yet — there is no buffer to dump.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATBD", s));
+
+    s.lastFrame.valid = true;
+    s.lastFrame.dlc = 8;
+    const uint8_t data[8] = {0x03, 0x41, 0x0C, 0x1A, 0xF8, 0x00, 0x00, 0x00};
+    std::memcpy(s.lastFrame.data, data, 8);
+
+    TEST_ASSERT_EQUAL(AtResult::BufferDump, applyAtCommand("ATBD", s));
+    // Length first, then the bytes — the ELM327 rendering.
+    TEST_ASSERT_EQUAL_STRING("08 03 41 0C 1A F8 00 00 00",
+                             formatBufferDump(s).c_str());
+}
+
+void test_buffer_dump_honours_the_frame_length() {
+    AdapterState s;
+    s.lastFrame.valid = true;
+    s.lastFrame.dlc = 3;
+    const uint8_t data[8] = {0xAA, 0xBB, 0xCC, 0, 0, 0, 0, 0};
+    std::memcpy(s.lastFrame.data, data, 8);
+    // Bytes beyond the DLC are not part of the frame and must not be printed
+    // as though the ECU sent them.
+    TEST_ASSERT_EQUAL_STRING("03 AA BB CC", formatBufferDump(s).c_str());
+}
+
+void test_reset_clears_the_buffer_dump() {
+    // ATZ is in every client's init sequence. If a future refactor gave
+    // AdapterState a hand-written reset (or made ReceivedFrame non-POD), it
+    // could silently stop clearing lastFrame — and a stale frame captured
+    // before the reset would then be reported to a client as live bus data.
+    AdapterState s;
+    s.lastFrame.valid = true;
+    s.lastFrame.dlc = 2;
+    const uint8_t data[8] = {0x11, 0x22, 0, 0, 0, 0, 0, 0};
+    std::memcpy(s.lastFrame.data, data, 8);
+
+    TEST_ASSERT_EQUAL(AtResult::Reset, applyAtCommand("ATZ", s));
+    TEST_ASSERT_FALSE(s.lastFrame.valid);
+    // Assert the observable behaviour, not just the flag, so this survives a
+    // refactor that changes how the clearing happens.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATBD", s));
+}
+
+void test_commands_for_buses_this_board_cannot_drive_are_refused() {
+    // These serve J1850, ISO 9141 and ISO 14230 — protocols with no
+    // electrical path on a CAN-only board. Answering OK would leave a client
+    // waiting on a bus that will never reply, which is a worse failure than
+    // an honest '?'. Phase 4 moves the J1939 entries out of this list.
+    const char* refused[] = {
+        "ATIB10", "ATIB96", "ATFI", "ATSI", "ATKW0", "ATKW1", "ATBI",
+        "ATSW20", "ATWM8106F1", "ATSP1", "ATSP2", "ATSP3", "ATSP4", "ATSP5",
+        "ATJE", "ATJS", "ATJHF0", "ATJHF1", "ATJTM1", "ATJTM5",
+        "ATMP1234", "ATDM1",
+    };
+    for (const char* command : refused) {
+        AdapterState s;
+        const AdapterState before = s;
+        TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand(command, s));
+        // A refusal must also not have moved anything on the way out.
+        TEST_ASSERT_EQUAL_UINT16(before.header, s.header);
+        TEST_ASSERT_EQUAL_UINT16(before.timeoutMs, s.timeoutMs);
+        TEST_ASSERT_EQUAL_UINT8(before.protocol, s.protocol);
+    }
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
     RUN_TEST(test_recognises_at_prefix);
+    RUN_TEST(test_recognises_the_at_sign_command_prefix);
     RUN_TEST(test_toggles_echo_spaces_headers_linefeeds);
     RUN_TEST(test_sets_header_from_atsh);
     RUN_TEST(test_sets_timeout_from_atst_in_four_ms_units);
@@ -182,8 +400,23 @@ int main(int, char**) {
     RUN_TEST(test_ignores_whitespace_and_case);
     RUN_TEST(test_reset_restores_defaults);
     RUN_TEST(test_protocol_select_is_accepted);
+    RUN_TEST(test_describes_the_current_protocol);
+    RUN_TEST(test_auto_selected_protocol_is_reported_as_auto);
     RUN_TEST(test_identify_and_voltage_are_distinct_results);
     RUN_TEST(test_unknown_command_reports_unknown);
+    RUN_TEST(test_monitor_commands_report_no_data_until_phase_four);
+    RUN_TEST(test_protocol_close_is_accepted);
+    RUN_TEST(test_j1939_monitor_commands_are_not_swallowed_by_the_can_monitor_stubs);
     RUN_TEST(test_harmless_commands_are_accepted_without_effect);
+    RUN_TEST(test_device_identifier_round_trips_verbatim);
+    RUN_TEST(test_device_description_is_not_the_version_banner);
+    RUN_TEST(test_reset_clears_the_device_identifier);
+    RUN_TEST(test_request_shaping_flags_are_stored);
+    RUN_TEST(test_byte_valued_commands_reject_out_of_range_and_garbage);
+    RUN_TEST(test_extended_addressing_is_set_and_cleared);
+    RUN_TEST(test_buffer_dump_renders_the_last_received_frame);
+    RUN_TEST(test_buffer_dump_honours_the_frame_length);
+    RUN_TEST(test_reset_clears_the_buffer_dump);
+    RUN_TEST(test_commands_for_buses_this_board_cannot_drive_are_refused);
     return UNITY_END();
 }

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <string>
 
 // ATST bounds, in milliseconds.
 //
@@ -32,6 +33,16 @@ constexpr uint16_t kMaxTimeoutMs = 65535;
 // `timeoutMs` (ATST, the response deadline).
 // `autoFormat` (ATCAF) is structural: this firmware only ever does ISO-TP
 // assembly, which is what ATCAF1 means, and ATCAF0 is stored but not honoured.
+// The most recent frame accepted by the session, kept solely so ATBD has
+// something to report. One frame, not the whole sequence: ATBD dumps a buffer,
+// and retaining a full multi-frame response would be the frame-retention work
+// that real ATH1 support needs and this phase deliberately does not do.
+struct ReceivedFrame {
+    bool valid = false;
+    uint8_t dlc = 0;
+    uint8_t data[8] = {};
+};
+
 struct AdapterState {
     bool echo = true;        // ATE1
     bool spaces = true;      // ATS1
@@ -40,6 +51,37 @@ struct AdapterState {
     bool autoFormat = true;  // ATCAF1 — stored, NOT honoured (see above)
     uint16_t header = 0x7DF; // ATSH — functional broadcast address
     uint16_t timeoutMs = 200;
+
+    // @3 — a client-set device identifier, exactly 12 characters, reported
+    // back by @2. Stored raw: this is a payload, not a command, so the
+    // uppercasing and space-stripping canonical() does must not touch it.
+    // A char array rather than std::string keeps AdapterState trivially
+    // assignable, which is what makes `state = AdapterState{}` a valid reset.
+    char identifier[13] = {};
+
+    // ATSP — the selected protocol number. Only 6 (ISO 15765-4, CAN 11-bit,
+    // 500 kbit/s) is selectable until phase 3 adds 7/8/9.
+    uint8_t protocol = 6;
+    // True when the client asked the adapter to choose (ATSP0 / ATSPAn)
+    // rather than pinning one. ATDP/ATDPN mark this, so a client can tell a
+    // negotiated protocol from one it set itself.
+    bool autoSelected = false;
+
+    bool responses = true;      // ATR1 — wait for a reply after transmitting
+    bool variableDlc = false;   // ATV0 — send full 8-byte frames
+    // ATAL/ATNL — STORED, NOT HONOURED. Allowing messages longer than 7 bytes
+    // means multi-frame transmit, and runRequest() builds single frames only.
+    // There is nothing to enable, so this flag changes no behaviour today.
+    bool allowLong = false;
+    uint8_t testerAddress = 0xF9;  // ATTA — the conventional OBD tester address
+    uint8_t priorityBits = 0x18;   // ATCP — 29-bit ID priority, phase 3
+
+    // ATCEA — CAN extended addressing. The address byte occupies the first
+    // data byte of every frame, so the usable payload drops to 6.
+    bool extendedAddressing = false;
+    uint8_t extendedAddress = 0;
+
+    ReceivedFrame lastFrame;
 };
 
 // What the caller must do after the command has been applied.
@@ -49,7 +91,21 @@ enum class AtResult {
     Reset,     // answer with the version banner
     Identify,  // answer with the version banner
     Voltage,   // answer with the measured supply voltage
+    DeviceDescription,  // @1 — answer with the device description
+    DeviceIdentifier,   // @2 — answer with state.identifier
+    DescribeProtocol,        // ATDP  — answer with describeProtocol(state)
+    DescribeProtocolNumber,  // ATDPN — answer with describeProtocolNumber(state)
+    BufferDump,  // ATBD — answer with formatBufferDump(state)
+    NoData,  // answer "NO DATA"
 };
 
 bool isAtCommand(const char* line);
 AtResult applyAtCommand(const char* line, AdapterState& state);
+
+// ATDP / ATDPN renderings. Pure functions of the state so they are host-tested
+// rather than living as string literals inside session.cpp.
+std::string describeProtocol(const AdapterState& state);
+std::string describeProtocolNumber(const AdapterState& state);
+
+// ATBD rendering: DLC first, then that many data bytes, all space-separated.
+std::string formatBufferDump(const AdapterState& state);

@@ -5,10 +5,13 @@
 #include "isotp/reassembler.h"
 #include "isotp/request.h"
 #include <Arduino.h>
+#include <cstring>
 
 namespace {
 
 const char* kVersionBanner = "ELM327 v1.5";
+// @1 — a device description, distinct from the ATI version banner.
+const char* kDeviceDescription = "RejsaElm OBD-II Adapter";
 
 } // namespace
 
@@ -27,6 +30,13 @@ std::string Elm327Session::handleLine(const char* line) {
             case AtResult::Reset:
             case AtResult::Identify: reply = kVersionBanner; break;
             case AtResult::Voltage:  reply = "12.6V"; break;
+            case AtResult::NoData:   reply = "NO DATA"; break;
+            case AtResult::DeviceDescription:    reply = kDeviceDescription; break;
+            case AtResult::DeviceIdentifier:     reply = state_.identifier; break;
+            case AtResult::DescribeProtocol:     reply = describeProtocol(state_); break;
+            case AtResult::DescribeProtocolNumber:
+                                                 reply = describeProtocolNumber(state_); break;
+            case AtResult::BufferDump:           reply = formatBufferDump(state_); break;
         }
     } else {
         reply = runRequest(line);
@@ -52,8 +62,14 @@ std::string Elm327Session::runRequest(const char* hexLine) {
 
     twai_message_t request = {};
     request.identifier = state_.header;
-    request.data_length_code = 8;
-    if (!buildSingleFrameRequest(payload, payloadLen, request.data)) {
+    // ATV1 sends only the bytes used; ATV0 (the default) pads to 8, which is
+    // what almost every ECU expects.
+    request.data_length_code = state_.variableDlc
+        ? static_cast<uint8_t>(state_.extendedAddressing ? payloadLen + 2 : payloadLen + 1)
+        : 8;
+    if (!buildSingleFrameRequest(payload, payloadLen, request.data,
+                                 state_.extendedAddressing,
+                                 state_.extendedAddress)) {
         return formatFault("?");
     }
 
@@ -72,6 +88,10 @@ std::string Elm327Session::runRequest(const char* hexLine) {
         return formatFault("CAN ERROR");
     }
 
+    // ATR0: fire and forget. The client has said it does not want a reply, so
+    // waiting out the full timeout would only stall the next command.
+    if (!state_.responses) return "OK";
+
     IsoTpReassembler reassembler;
     const uint32_t deadline = millis() + state_.timeoutMs;
 
@@ -86,7 +106,31 @@ std::string Elm327Session::runRequest(const char* hexLine) {
             : (rx.identifier == static_cast<uint32_t>(state_.header) + 8);
         if (!addressed) continue;
 
-        switch (reassembler.offer(rx.data, rx.data_length_code)) {
+        // Keep the newest accepted frame so ATBD has something to report.
+        // This is the RAW frame, address byte and all: ATBD dumps exactly what
+        // came off the bus, not what the reassembler made of it.
+        state_.lastFrame.valid = true;
+        // A malformed frame can carry a DLC of 9-15; formatBufferDump only
+        // ever prints 8 bytes, so clamp here rather than let the two disagree.
+        state_.lastFrame.dlc = (rx.data_length_code > 8) ? 8 : rx.data_length_code;
+        std::memcpy(state_.lastFrame.data, rx.data, 8);
+
+        // Extended addressing puts the target's own address in data[0] on the
+        // way out (buildSingleFrameRequest), and the ECU mirrors that same
+        // convention on the way back: its reply also leads with an address
+        // byte before the ISO-TP PCI byte. The reassembler only understands
+        // ISO-TP, so the receive side must undo what the transmit side added
+        // — strip that leading byte here, or the reassembler reads the
+        // address as a PCI type and every extended-addressing request fails.
+        const uint8_t* isoTpFrame = rx.data;
+        size_t isoTpLen = rx.data_length_code;
+        if (state_.extendedAddressing) {
+            if (isoTpLen < 2) continue;  // no room for address byte + PCI
+            ++isoTpFrame;
+            --isoTpLen;
+        }
+
+        switch (reassembler.offer(isoTpFrame, isoTpLen)) {
             case IsoTpState::Complete: {
                 const std::vector<uint8_t>& body = reassembler.payload();
                 switch (classifyResponse(payload, payloadLen,
