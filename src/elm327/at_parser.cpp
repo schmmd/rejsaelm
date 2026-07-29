@@ -28,6 +28,15 @@ bool hexTail(const std::string& s, size_t from, uint32_t& value) {
     return end && *end == '\0';
 }
 
+// Parses a one-byte hex tail, e.g. ATTAF9. Rejects values that do not fit in
+// a byte rather than truncating them into a different address.
+bool byteTail(const std::string& s, size_t from, uint8_t& value) {
+    uint32_t v = 0;
+    if (!hexTail(s, from, v) || v > 0xFF) return false;
+    value = static_cast<uint8_t>(v);
+    return true;
+}
+
 } // namespace
 
 bool isAtCommand(const char* line) {
@@ -119,6 +128,27 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
 
     if (s == "ATDP")  return AtResult::DescribeProtocol;
     if (s == "ATDPN") return AtResult::DescribeProtocolNumber;
+
+    if (s == "ATR0") { state.responses = false; return AtResult::Ok; }
+    if (s == "ATR1") { state.responses = true;  return AtResult::Ok; }
+    if (s == "ATV0") { state.variableDlc = false; return AtResult::Ok; }
+    if (s == "ATV1") { state.variableDlc = true;  return AtResult::Ok; }
+    if (s == "ATAL") { state.allowLong = true;  return AtResult::Ok; }
+    if (s == "ATNL") { state.allowLong = false; return AtResult::Ok; }
+
+    if (startsWith(s, "ATTA")) {
+        uint8_t v = 0;
+        if (!byteTail(s, 4, v)) return AtResult::Unknown;
+        state.testerAddress = v;
+        return AtResult::Ok;
+    }
+    // Must be tested before the harmless ATCF/ATCM/ATCRA prefix block below.
+    if (startsWith(s, "ATCP")) {
+        uint8_t v = 0;
+        if (!byteTail(s, 4, v)) return AtResult::Unknown;
+        state.priorityBits = v;
+        return AtResult::Ok;
+    }
 
     // Commands whose behaviour we always get right internally. Accepting them
     // is friendlier than '?', which makes clients think the adapter is broken.

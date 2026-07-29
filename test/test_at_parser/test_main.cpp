@@ -243,6 +243,43 @@ void test_reset_clears_the_device_identifier() {
     TEST_ASSERT_EQUAL_STRING("", s.identifier);
 }
 
+void test_request_shaping_flags_are_stored() {
+    AdapterState s;
+    TEST_ASSERT_TRUE(s.responses);      // R1 is the default
+    TEST_ASSERT_FALSE(s.variableDlc);   // V0 is the default: always DLC 8
+
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATR0", s));
+    TEST_ASSERT_FALSE(s.responses);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATR1", s));
+    TEST_ASSERT_TRUE(s.responses);
+
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATV1", s));
+    TEST_ASSERT_TRUE(s.variableDlc);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATV0", s));
+    TEST_ASSERT_FALSE(s.variableDlc);
+
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATAL", s));
+    TEST_ASSERT_TRUE(s.allowLong);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATNL", s));
+    TEST_ASSERT_FALSE(s.allowLong);
+
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATTA F9", s));
+    TEST_ASSERT_EQUAL_UINT8(0xF9, s.testerAddress);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCP18", s));
+    TEST_ASSERT_EQUAL_UINT8(0x18, s.priorityBits);
+}
+
+void test_byte_valued_commands_reject_out_of_range_and_garbage() {
+    AdapterState s;
+    const uint8_t ta = s.testerAddress;
+    // A value wider than one byte is not a tester address; truncating it
+    // would address something the client never named.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATTA100", s));
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATTAZZ", s));
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATTA", s));
+    TEST_ASSERT_EQUAL_UINT8(ta, s.testerAddress);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
@@ -266,5 +303,7 @@ int main(int, char**) {
     RUN_TEST(test_device_identifier_round_trips_verbatim);
     RUN_TEST(test_device_description_is_not_the_version_banner);
     RUN_TEST(test_reset_clears_the_device_identifier);
+    RUN_TEST(test_request_shaping_flags_are_stored);
+    RUN_TEST(test_byte_valued_commands_reject_out_of_range_and_garbage);
     return UNITY_END();
 }

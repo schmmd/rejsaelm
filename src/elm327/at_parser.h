@@ -56,6 +56,15 @@ struct AdapterState {
     // rather than pinning one. ATDP/ATDPN mark this, so a client can tell a
     // negotiated protocol from one it set itself.
     bool autoSelected = false;
+
+    bool responses = true;      // ATR1 — wait for a reply after transmitting
+    bool variableDlc = false;   // ATV0 — send full 8-byte frames
+    // ATAL/ATNL — STORED, NOT HONOURED. Allowing messages longer than 7 bytes
+    // means multi-frame transmit, and runRequest() builds single frames only.
+    // There is nothing to enable, so this flag changes no behaviour today.
+    bool allowLong = false;
+    uint8_t testerAddress = 0xF9;  // ATTA — the conventional OBD tester address
+    uint8_t priorityBits = 0x18;   // ATCP — 29-bit ID priority, phase 3
 };
 
 // What the caller must do after the command has been applied.
