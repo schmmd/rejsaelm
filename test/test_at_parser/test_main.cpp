@@ -318,6 +318,24 @@ void test_buffer_dump_honours_the_frame_length() {
     TEST_ASSERT_EQUAL_STRING("03 AA BB CC", formatBufferDump(s).c_str());
 }
 
+void test_reset_clears_the_buffer_dump() {
+    // ATZ is in every client's init sequence. If a future refactor gave
+    // AdapterState a hand-written reset (or made ReceivedFrame non-POD), it
+    // could silently stop clearing lastFrame — and a stale frame captured
+    // before the reset would then be reported to a client as live bus data.
+    AdapterState s;
+    s.lastFrame.valid = true;
+    s.lastFrame.dlc = 2;
+    const uint8_t data[8] = {0x11, 0x22, 0, 0, 0, 0, 0, 0};
+    std::memcpy(s.lastFrame.data, data, 8);
+
+    TEST_ASSERT_EQUAL(AtResult::Reset, applyAtCommand("ATZ", s));
+    TEST_ASSERT_FALSE(s.lastFrame.valid);
+    // Assert the observable behaviour, not just the flag, so this survives a
+    // refactor that changes how the clearing happens.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATBD", s));
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
@@ -346,5 +364,6 @@ int main(int, char**) {
     RUN_TEST(test_extended_addressing_is_set_and_cleared);
     RUN_TEST(test_buffer_dump_renders_the_last_received_frame);
     RUN_TEST(test_buffer_dump_honours_the_frame_length);
+    RUN_TEST(test_reset_clears_the_buffer_dump);
     return UNITY_END();
 }
