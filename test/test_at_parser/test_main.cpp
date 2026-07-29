@@ -180,6 +180,37 @@ void test_harmless_commands_are_accepted_without_effect() {
     }
 }
 
+void test_device_identifier_round_trips_verbatim() {
+    AdapterState s;
+    // Unset, @2 has nothing to report. '?' is the honest answer, not "".
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("@2", s));
+
+    // Exactly 12 characters, stored verbatim: canonical() would uppercase
+    // and strip spaces, which is fine for commands and wrong for a payload.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("@3 RejsaElm0001", s));
+    TEST_ASSERT_EQUAL(AtResult::DeviceIdentifier, applyAtCommand("@2", s));
+    TEST_ASSERT_EQUAL_STRING("RejsaElm0001", s.identifier);
+
+    // Wrong length is rejected, and must not partially overwrite.
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("@3 SHORT", s));
+    TEST_ASSERT_EQUAL_STRING("RejsaElm0001", s.identifier);
+}
+
+void test_device_description_is_not_the_version_banner() {
+    AdapterState s;
+    // @1 is a device description; ATI is the version banner. A client that
+    // probes both and gets one string twice cannot tell them apart.
+    TEST_ASSERT_EQUAL(AtResult::DeviceDescription, applyAtCommand("@1", s));
+    TEST_ASSERT_EQUAL(AtResult::Identify, applyAtCommand("ATI", s));
+}
+
+void test_reset_clears_the_device_identifier() {
+    AdapterState s;
+    applyAtCommand("@3 RejsaElm0001", s);
+    TEST_ASSERT_EQUAL(AtResult::Reset, applyAtCommand("ATZ", s));
+    TEST_ASSERT_EQUAL_STRING("", s.identifier);
+}
+
 int main(int, char**) {
     UNITY_BEGIN();
     RUN_TEST(test_adapter_state_defaults_match_a_fresh_elm327);
@@ -198,5 +229,8 @@ int main(int, char**) {
     RUN_TEST(test_identify_and_voltage_are_distinct_results);
     RUN_TEST(test_unknown_command_reports_unknown);
     RUN_TEST(test_harmless_commands_are_accepted_without_effect);
+    RUN_TEST(test_device_identifier_round_trips_verbatim);
+    RUN_TEST(test_device_description_is_not_the_version_banner);
+    RUN_TEST(test_reset_clears_the_device_identifier);
     return UNITY_END();
 }

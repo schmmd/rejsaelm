@@ -40,6 +40,13 @@ struct AdapterState {
     bool autoFormat = true;  // ATCAF1 — stored, NOT honoured (see above)
     uint16_t header = 0x7DF; // ATSH — functional broadcast address
     uint16_t timeoutMs = 200;
+
+    // @3 — a client-set device identifier, exactly 12 characters, reported
+    // back by @2. Stored raw: this is a payload, not a command, so the
+    // uppercasing and space-stripping canonical() does must not touch it.
+    // A char array rather than std::string keeps AdapterState trivially
+    // assignable, which is what makes `state = AdapterState{}` a valid reset.
+    char identifier[13] = {};
 };
 
 // What the caller must do after the command has been applied.
@@ -49,6 +56,8 @@ enum class AtResult {
     Reset,     // answer with the version banner
     Identify,  // answer with the version banner
     Voltage,   // answer with the measured supply voltage
+    DeviceDescription,  // @1 — answer with the device description
+    DeviceIdentifier,   // @2 — answer with state.identifier
 };
 
 bool isAtCommand(const char* line);

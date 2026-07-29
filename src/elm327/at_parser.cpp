@@ -48,6 +48,28 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
     if (s == "ATI") return AtResult::Identify;
     if (s == "ATRV") return AtResult::Voltage;
 
+    if (s == "@1") return AtResult::DeviceDescription;
+    if (s == "@2") {
+        // Nothing has been set, so there is nothing truthful to report.
+        return state.identifier[0] ? AtResult::DeviceIdentifier
+                                   : AtResult::Unknown;
+    }
+    if (startsWith(s, "@3")) {
+        // Parse the RAW line: the identifier is a payload and canonical()
+        // has already destroyed its case and spacing.
+        const char* p = std::strchr(line, '3');
+        if (!p) return AtResult::Unknown;
+        ++p;
+        while (*p == ' ') ++p;
+        const size_t len = std::strlen(p);
+        // ELM327 specifies exactly 12 characters. Accepting a short value
+        // would leave the rest of the field as stale bytes from a previous set.
+        if (len != 12) return AtResult::Unknown;
+        std::memcpy(state.identifier, p, 12);
+        state.identifier[12] = '\0';
+        return AtResult::Ok;
+    }
+
     if (s == "ATE0") { state.echo = false; return AtResult::Ok; }
     if (s == "ATE1") { state.echo = true;  return AtResult::Ok; }
     if (s == "ATS0") { state.spaces = false; return AtResult::Ok; }
