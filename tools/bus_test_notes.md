@@ -1,5 +1,10 @@
 # CAN-FD bus test
 
+> **The `rejsacan_bustest` environment has been removed.** The procedure below
+> is kept because the question it answers is still open. To run it again,
+> restore the env and its `BUS_TEST_ONLY` blocks in `src/main.cpp` from git
+> history — `canBusBegin(true)` and `canBusCounters()` are still in `can/`.
+
 Answers one question: does the IONIQ 5's OBD port carry classic CAN that the
 ESP32-S3's TWAI controller can decode, or CAN-FD that it cannot?
 

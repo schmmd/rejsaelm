@@ -23,12 +23,11 @@ uv sync                       # create .venv from pyproject.toml
 uv run pytest                 # 156 tests for did_scan.py and didscan_core.py
 ```
 
-Four environments:
+Three environments:
 
 | Environment | Purpose |
 |---|---|
 | `rejsacan` | The adapter firmware |
-| `rejsacan_bustest` | Listen-only diagnostic build; counts frames against bus errors |
 | `rejsacan_usbscan` | Scan-only build for `tools/did_scan.py`; see "DID scanning" below |
 | `native` | Host-side unit tests for the pure-logic units |
 
