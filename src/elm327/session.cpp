@@ -107,11 +107,30 @@ std::string Elm327Session::runRequest(const char* hexLine) {
         if (!addressed) continue;
 
         // Keep the newest accepted frame so ATBD has something to report.
+        // This is the RAW frame, address byte and all: ATBD dumps exactly what
+        // came off the bus, not what the reassembler made of it.
         state_.lastFrame.valid = true;
-        state_.lastFrame.dlc = rx.data_length_code;
+        // A malformed frame can carry a DLC of 9-15; formatBufferDump only
+        // ever prints 8 bytes, so clamp here rather than let the two disagree.
+        state_.lastFrame.dlc = (rx.data_length_code > 8) ? 8 : rx.data_length_code;
         std::memcpy(state_.lastFrame.data, rx.data, 8);
 
-        switch (reassembler.offer(rx.data, rx.data_length_code)) {
+        // Extended addressing puts the target's own address in data[0] on the
+        // way out (buildSingleFrameRequest), and the ECU mirrors that same
+        // convention on the way back: its reply also leads with an address
+        // byte before the ISO-TP PCI byte. The reassembler only understands
+        // ISO-TP, so the receive side must undo what the transmit side added
+        // — strip that leading byte here, or the reassembler reads the
+        // address as a PCI type and every extended-addressing request fails.
+        const uint8_t* isoTpFrame = rx.data;
+        size_t isoTpLen = rx.data_length_code;
+        if (state_.extendedAddressing) {
+            if (isoTpLen < 2) continue;  // no room for address byte + PCI
+            ++isoTpFrame;
+            --isoTpLen;
+        }
+
+        switch (reassembler.offer(isoTpFrame, isoTpLen)) {
             case IsoTpState::Complete: {
                 const std::vector<uint8_t>& body = reassembler.payload();
                 switch (classifyResponse(payload, payloadLen,

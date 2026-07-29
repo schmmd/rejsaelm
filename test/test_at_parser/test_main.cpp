@@ -287,10 +287,13 @@ void test_request_shaping_flags_are_stored() {
     TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATNL", s));
     TEST_ASSERT_FALSE(s.allowLong);
 
-    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATTA F9", s));
-    TEST_ASSERT_EQUAL_UINT8(0xF9, s.testerAddress);
-    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCP18", s));
-    TEST_ASSERT_EQUAL_UINT8(0x18, s.priorityBits);
+    // Non-default values: ATTA's and ATCP's defaults are 0xF9 and 0x18
+    // (at_parser.h), so asserting those back would pass even if the branches
+    // that apply them were deleted.
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATTA 0F", s));
+    TEST_ASSERT_EQUAL_UINT8(0x0F, s.testerAddress);
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATCP1C", s));
+    TEST_ASSERT_EQUAL_UINT8(0x1C, s.priorityBits);
 }
 
 void test_byte_valued_commands_reject_out_of_range_and_garbage() {

@@ -10,7 +10,7 @@ generic adapter that happens to have been built for one.
 ## Build and flash
 
 ```sh
-pio test -e native            # 74 host tests, no hardware needed
+pio test -e native            # 93 host tests, no hardware needed
 pio run -e rejsacan -t upload # build and flash the board
 pio device monitor            # 115200 baud
 ```

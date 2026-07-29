@@ -119,6 +119,10 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
         // We speak exactly one protocol: ISO 15765-4 CAN, 11-bit, 500 kbit/s
         // (protocol 6). Phase 3 adds 7/8/9. Anything else is rejected rather
         // than accepted and silently not driven.
+        // This block IS order-sensitive: it returns from inside itself for
+        // every case, including the rejection, so it must stay ahead of
+        // anything else that might otherwise want to claim an "ATSP..." line.
+        // It never falls through to the catch-all Unknown at the bottom.
         if (s == "ATSP6")   { state.protocol = 6; state.autoSelected = false; return AtResult::Ok; }
         if (s == "ATSP0")   { state.protocol = 6; state.autoSelected = true;  return AtResult::Ok; }
         if (s == "ATSPA6" || s == "ATSPA0") {
@@ -143,7 +147,9 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
         state.testerAddress = v;
         return AtResult::Ok;
     }
-    // Must be tested before the harmless ATCF/ATCM/ATCRA prefix block below.
+    // ATCEA is an exact/prefix match on its own five-letter name; it shares no
+    // prefix with ATCF/ATCM/ATCRA below, so there is no ordering dependency
+    // between this block and that one — either could move without effect.
     if (startsWith(s, "ATCEA")) {
         // A bare ATCEA turns extended addressing off.
         if (s == "ATCEA") { state.extendedAddressing = false; return AtResult::Ok; }
@@ -177,10 +183,12 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
     // Monitor modes stream frames until interrupted, which the session cannot
     // do yet — handleLine() is strictly request/reply/prompt. Phase 4 builds
     // the streaming path and these become real. Answer immediately meanwhile.
-    // Must come after the ATM0/ATM1 entries above, or those would never be
-    // reached. Matched by exact/4-char prefix rather than a bare "ATM" prefix
-    // so J1939's ATMP (monitor for PGN) is not swallowed here — it is a
-    // deferred command that must still fall through to Unknown below.
+    // No ordering dependency on the ATM0/ATM1 entries above: those are exact
+    // matches on "ATM0"/"ATM1", which cannot match the ATMR/ATMT prefixes or
+    // the ATMA literal here, so this block could move without effect. Matched
+    // by exact/4-char prefix rather than a bare "ATM" prefix so J1939's ATMP
+    // (monitor for PGN) is not swallowed here — it is a deferred command that
+    // must still fall through to Unknown below.
     if (s == "ATMA" || startsWith(s, "ATMR") || startsWith(s, "ATMT")) {
         return AtResult::NoData;
     }
