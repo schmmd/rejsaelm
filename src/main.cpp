@@ -6,6 +6,18 @@
 #include "link/serial_link.h"
 #include "link/wifi_link.h"
 
+#if defined(WIFI)
+#  ifndef WIFI_PASSWORD
+// A default so -DWIFI alone builds, and a warning because a published default
+// password on a device wired to a CAN bus is not a default anyone should ship.
+#    define WIFI_PASSWORD "rejsacan"
+#    warning "Building WiFi with the default AP password. Override with -DWIFI_PASSWORD"
+#  endif
+// WPA2 rejects anything shorter and softAP() would simply fail to come up at
+// runtime, which looks like a broken radio rather than a bad flag.
+static_assert(sizeof(WIFI_PASSWORD) >= 9, "WIFI_PASSWORD must be at least 8 characters");
+#endif
+
 static Elm327Session g_session;
 
 static void onLine(const char* line, std::string& reply) {
@@ -42,13 +54,13 @@ void setup() {
 #  else
     bleLinkSetLineHandler(onLine);
     bleLinkBegin("RejsaElm");
-#    if defined(WIFI_LINK)
+#    if defined(WIFI)
     // Runs ALONGSIDE BLE, not instead of it. Both feed the same session, and
     // whichever client connects first holds it until it leaves; see
     // link/session_owner.h. WPA2 rather than an open AP: anyone who associates
     // is one connect away from the bus.
     wifiLinkSetLineHandler(onLine);
-    wifiLinkBegin("RejsaElm", WIFI_LINK_PASSWORD);
+    wifiLinkBegin("RejsaElm", WIFI_PASSWORD);
 #    endif
 #  endif
 #endif
@@ -72,7 +84,7 @@ void loop() {
 }
 #elif defined(USB_SERIAL_LINK)
 void loop() { serialLinkPoll(); }
-#elif defined(WIFI_LINK)
+#elif defined(WIFI)
 // BLE drives itself from its own task; only the WiFi link needs polling.
 void loop() { wifiLinkPoll(); }
 #else

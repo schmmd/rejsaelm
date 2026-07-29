@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 
-// TCP transport for the ELM327 session, used by env:rejsacan_wifi.
+// TCP transport for the ELM327 session, compiled in only when -DWIFI is set.
 //
 // The board runs its own access point and listens on port 35000 — the
 // convention every ELM327-over-WiFi clone uses, so SavvyCAN, OBD Fusion and a

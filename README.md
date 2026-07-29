@@ -23,14 +23,13 @@ uv sync                       # create .venv from pyproject.toml
 uv run pytest                 # 156 tests for did_scan.py and didscan_core.py
 ```
 
-Five environments:
+Four environments:
 
 | Environment | Purpose |
 |---|---|
 | `rejsacan` | The adapter firmware |
 | `rejsacan_bustest` | Listen-only diagnostic build; counts frames against bus errors |
 | `rejsacan_usbscan` | Scan-only build for `tools/did_scan.py`; see "DID scanning" below |
-| `rejsacan_wifi` | The adapter with WiFi *and* BLE; see "WiFi" below |
 | `native` | Host-side unit tests for the pure-logic units |
 
 ## Architecture
@@ -70,19 +69,25 @@ session; a second connection is dropped immediately.
 
 ## WiFi
 
-`env:rejsacan_wifi` is `env:rejsacan` plus a TCP listener — BLE and WiFi both
-serve the same `Elm327Session`. The board runs its own WPA2 access point and listens on **port 35000** — the
+WiFi is off by default and opt-in at build time with `-DWIFI`, which adds a TCP
+listener to the normal firmware — BLE and WiFi then both serve the same
+`Elm327Session`. The board runs its own WPA2 access point and listens on **port 35000** — the
 convention every ELM327-over-WiFi clone uses, so SavvyCAN, OBD Fusion and
 `nc 192.168.4.1 35000` all work with no configuration.
 
+PlatformIO has no `--build-flag`, so the flag goes through the environment:
+
 ```sh
-pio run -e rejsacan_wifi -t upload
+PLATFORMIO_BUILD_FLAGS='-DWIFI -DWIFI_PASSWORD=\"hunter2xyz\"' \
+  pio run -e rejsacan -t upload
 # join SSID "RejsaElm", then:
 nc 192.168.4.1 35000
 ```
 
-**Change `WIFI_LINK_PASSWORD` in `platformio.ini` before flashing.** It is the
-only thing between anyone in radio range and the CAN bus of a parked car.
+**Set `WIFI_PASSWORD`.** It is the only thing between anyone in radio range and
+the CAN bus of a parked car. Building without it uses a default published in
+this repo and warns at compile time; anything under WPA2's 8-character minimum
+fails the build rather than silently failing to bring the AP up.
 
 Station mode (joining an existing network) is not offered: the car is not where
 the house WiFi is, and the credentials would need somewhere to live.
@@ -96,8 +101,9 @@ and anyone else — same radio or the other one — is dropped at connect. USB C
 stays separated at build time: it has no connect/disconnect events to hang a
 claim on.
 
-Not folded into `env:rejsacan`: the WiFi stack costs ~205 kB flash, ~11 kB RAM
-and idle current. Without `-DWIFI_LINK` the linker drops all of it.
+Not on by default: the WiFi stack costs ~415 kB of flash, ~13 kB of RAM and
+idle current draw. Without `-DWIFI` the linker drops all of it — verified with
+`nm` on the two images, the default build contains no `esp_wifi_*` symbols.
 
 ## DID scanning
 
