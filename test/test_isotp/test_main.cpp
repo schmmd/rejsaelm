@@ -104,6 +104,66 @@ void test_reset_clears_state() {
     TEST_ASSERT_EQUAL(IsoTpState::Error, r.offer(cf, 8));
 }
 
+void test_single_frame_with_bogus_dlc_does_not_overread() {
+    IsoTpReassembler r;
+    // A malformed DLC of 15 would make length = 14 (low nibble of frame[0]),
+    // which is a legal-looking single-frame length claim but requires
+    // reading 14 bytes out of an 8-byte CAN frame. The canary right after
+    // the frame buffer must never show up in the payload.
+    struct {
+        uint8_t frame[8];
+        uint8_t canary[8];
+    } buf;
+    buf.frame[0] = 0x0E;  // single frame, length 14
+    for (int i = 1; i < 8; ++i) buf.frame[i] = i;
+    for (int i = 0; i < 8; ++i) buf.canary[i] = 0xEE;
+
+    r.offer(buf.frame, 15);
+    for (uint8_t b : r.payload()) {
+        TEST_ASSERT_NOT_EQUAL(0xEE, b);
+    }
+}
+
+void test_first_frame_with_bogus_dlc_does_not_overread() {
+    IsoTpReassembler r;
+    // len = 15 would make take = min(15 - 2, expected_), reading up to
+    // frame[14] out of an 8-byte buffer.
+    struct {
+        uint8_t frame[8];
+        uint8_t canary[8];
+    } buf;
+    buf.frame[0] = 0x10;
+    buf.frame[1] = 0x64;  // expected_ = 100, plenty to want more than 8 bytes
+    for (int i = 2; i < 8; ++i) buf.frame[i] = i;
+    for (int i = 0; i < 8; ++i) buf.canary[i] = 0xEE;
+
+    r.offer(buf.frame, 15);
+    for (uint8_t b : r.payload()) {
+        TEST_ASSERT_NOT_EQUAL(0xEE, b);
+    }
+}
+
+void test_consecutive_frame_with_bogus_dlc_does_not_overread() {
+    IsoTpReassembler r;
+    const uint8_t ff[8] = {0x10, 0x64, 1, 2, 3, 4, 5, 6};
+    TEST_ASSERT_EQUAL(IsoTpState::NeedFlowControl, r.offer(ff, 8));
+
+    // len = 15 would make available = 15 - 1 = 14, reading up to frame[14]
+    // out of an 8-byte buffer.
+    struct {
+        uint8_t frame[8];
+        uint8_t canary[8];
+    } buf;
+    buf.frame[0] = 0x21;
+    for (int i = 1; i < 8; ++i) buf.frame[i] = i;
+    for (int i = 0; i < 8; ++i) buf.canary[i] = 0xEE;
+
+    r.offer(buf.frame, 15);
+    for (uint8_t b : r.payload()) {
+        TEST_ASSERT_NOT_EQUAL(0xEE, b);
+    }
+}
+
 void test_flow_control_frame_is_an_error() {
     IsoTpReassembler r;
     // Flow-control frame: PCI type 3 (first byte 0x30)
@@ -191,6 +251,9 @@ int main(int, char**) {
     RUN_TEST(test_sequence_number_wraps_past_fifteen);
     RUN_TEST(test_consecutive_frame_without_first_frame_is_an_error);
     RUN_TEST(test_reset_clears_state);
+    RUN_TEST(test_single_frame_with_bogus_dlc_does_not_overread);
+    RUN_TEST(test_first_frame_with_bogus_dlc_does_not_overread);
+    RUN_TEST(test_consecutive_frame_with_bogus_dlc_does_not_overread);
     RUN_TEST(test_flow_control_frame_is_an_error);
     RUN_TEST(test_single_frame_request_is_length_prefixed_and_padded);
     RUN_TEST(test_request_longer_than_seven_bytes_is_rejected);
