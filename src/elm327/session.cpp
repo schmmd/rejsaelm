@@ -5,10 +5,13 @@
 #include "isotp/reassembler.h"
 #include "isotp/request.h"
 #include <Arduino.h>
+#include <cstring>
 
 namespace {
 
 const char* kVersionBanner = "ELM327 v1.5";
+// @1 — a device description, distinct from the ATI version banner.
+const char* kDeviceDescription = "RejsaElm OBD-II Adapter";
 
 } // namespace
 
@@ -27,6 +30,13 @@ std::string Elm327Session::handleLine(const char* line) {
             case AtResult::Reset:
             case AtResult::Identify: reply = kVersionBanner; break;
             case AtResult::Voltage:  reply = "12.6V"; break;
+            case AtResult::NoData:   reply = "NO DATA"; break;
+            case AtResult::DeviceDescription:    reply = kDeviceDescription; break;
+            case AtResult::DeviceIdentifier:     reply = state_.identifier; break;
+            case AtResult::DescribeProtocol:     reply = describeProtocol(state_); break;
+            case AtResult::DescribeProtocolNumber:
+                                                 reply = describeProtocolNumber(state_); break;
+            case AtResult::BufferDump:           reply = formatBufferDump(state_); break;
         }
     } else {
         reply = runRequest(line);
@@ -52,8 +62,14 @@ std::string Elm327Session::runRequest(const char* hexLine) {
 
     twai_message_t request = {};
     request.identifier = state_.header;
-    request.data_length_code = 8;
-    if (!buildSingleFrameRequest(payload, payloadLen, request.data)) {
+    // ATV1 sends only the bytes used; ATV0 (the default) pads to 8, which is
+    // what almost every ECU expects.
+    request.data_length_code = state_.variableDlc
+        ? static_cast<uint8_t>(state_.extendedAddressing ? payloadLen + 2 : payloadLen + 1)
+        : 8;
+    if (!buildSingleFrameRequest(payload, payloadLen, request.data,
+                                 state_.extendedAddressing,
+                                 state_.extendedAddress)) {
         return formatFault("?");
     }
 
@@ -72,6 +88,10 @@ std::string Elm327Session::runRequest(const char* hexLine) {
         return formatFault("CAN ERROR");
     }
 
+    // ATR0: fire and forget. The client has said it does not want a reply, so
+    // waiting out the full timeout would only stall the next command.
+    if (!state_.responses) return "OK";
+
     IsoTpReassembler reassembler;
     const uint32_t deadline = millis() + state_.timeoutMs;
 
@@ -85,6 +105,11 @@ std::string Elm327Session::runRequest(const char* hexLine) {
             ? (rx.identifier >= 0x7E8 && rx.identifier <= 0x7EF)
             : (rx.identifier == static_cast<uint32_t>(state_.header) + 8);
         if (!addressed) continue;
+
+        // Keep the newest accepted frame so ATBD has something to report.
+        state_.lastFrame.valid = true;
+        state_.lastFrame.dlc = rx.data_length_code;
+        std::memcpy(state_.lastFrame.data, rx.data, 8);
 
         switch (reassembler.offer(rx.data, rx.data_length_code)) {
             case IsoTpState::Complete: {
