@@ -9,10 +9,15 @@
 // (joining an existing network) is deliberately not offered: the car is not
 // where the house WiFi is, and credentials would need somewhere to live.
 //
-// Started INSTEAD of BLE, not alongside it, for the reason spelled out in
-// serial_link.h: Elm327Session is half-duplex and holds mutable state, and BLE
-// callbacks run on the NimBLE host task while wifiLinkPoll() runs in loop().
-// Two links feeding one session would race on that state and on the CAN bus.
+// Runs ALONGSIDE BLE. Elm327Session is half-duplex and holds mutable state, and
+// BLE callbacks run on the NimBLE host task while wifiLinkPoll() runs in
+// loop(), so the two must never both drive it -- but that is enforced by
+// ownership (link/session_owner.h) rather than by keeping the radios apart:
+// only the client holding the session is fed to the handler, so the other link
+// stays advertising/listening without ever touching state_ or the bus.
+//
+// USB CDC is still separated at build time; see serial_link.h. It has no
+// connect/disconnect events to hang a claim on.
 //
 // Same handler signature as ble_link.h: one complete CR-stripped line in, the
 // reply text (prompt included) out.

@@ -39,13 +39,17 @@ void setup() {
     }
 #  if defined(USB_SERIAL_LINK)
     serialLinkSetLineHandler(onLine);
-#  elif defined(WIFI_LINK)
-    wifiLinkSetLineHandler(onLine);
-    // WPA2, not an open AP: the bus is reachable by anyone who associates.
-    wifiLinkBegin("RejsaElm", WIFI_LINK_PASSWORD);
 #  else
     bleLinkSetLineHandler(onLine);
     bleLinkBegin("RejsaElm");
+#    if defined(WIFI_LINK)
+    // Runs ALONGSIDE BLE, not instead of it. Both feed the same session, and
+    // whichever client connects first holds it until it leaves; see
+    // link/session_owner.h. WPA2 rather than an open AP: anyone who associates
+    // is one connect away from the bus.
+    wifiLinkSetLineHandler(onLine);
+    wifiLinkBegin("RejsaElm", WIFI_LINK_PASSWORD);
+#    endif
 #  endif
 #endif
 }
@@ -69,6 +73,7 @@ void loop() {
 #elif defined(USB_SERIAL_LINK)
 void loop() { serialLinkPoll(); }
 #elif defined(WIFI_LINK)
+// BLE drives itself from its own task; only the WiFi link needs polling.
 void loop() { wifiLinkPoll(); }
 #else
 void loop() { delay(1000); }

@@ -1,4 +1,5 @@
 #include "link/ble_link.h"
+#include "link/session_owner.h"
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -20,12 +21,11 @@ BLECharacteristic* g_elmChar = nullptr;
 BLECharacteristic* g_nusTx = nullptr;
 BLEServer* g_server = nullptr;
 
-// ELM327 is stateful and half-duplex: the current ATSH header and echo/space
-// settings persist between commands. Two clients issuing commands would
-// interleave replies and corrupt both sessions, so the first connection owns
-// the session and later ones are dropped.
+// Which BLE connection holds the session, when the session is held by BLE at
+// all. Ownership itself lives in link/session_owner.h because WiFi can be up on
+// the same board and must be arbitrated against, not just other BLE clients.
+// Only meaningful while sessionOwnerIs(LinkId::Ble).
 uint16_t g_ownerHandle = 0;
-bool g_hasOwner = false;
 
 std::string g_rxBuffer;
 
@@ -81,7 +81,7 @@ void notifyChunk(BLECharacteristic* channel, const std::string& piece) {
 // notifications; over-estimating would have the stack silently truncate the
 // reply, so the floor is never crossed.
 size_t chunkSize() {
-    if (!g_server || !g_hasOwner) return 20;
+    if (!g_server || !sessionOwnerIs(LinkId::Ble)) return 20;
     const uint16_t mtu = g_server->getPeerMTU(g_ownerHandle);
     return mtu > 23 ? static_cast<size_t>(mtu - 3) : 20;
 }
@@ -98,6 +98,14 @@ void deliver(const std::string& text, bool viaNus) {
 }
 
 void feed(const std::string& incoming, bool viaNus) {
+    // A client we are in the middle of rejecting can still write in the window
+    // before its disconnect completes, and WiFi may hold the session outright.
+    // Either way this input must not reach the session.
+    //
+    // ponytail: does not check WHICH handle wrote, so it trusts that the owner
+    // is the only connection left once rejection completes. Compare against
+    // g_ownerHandle if a rejected client is ever seen landing a command.
+    if (!sessionOwnerIs(LinkId::Ble)) return;
     if (g_rxBuffer.size() + incoming.size() > kMaxRxBuffer) {
         // Unrecoverable partial command — drop it and start clean rather
         // than parsing a stitched-together fragment as if it were real
@@ -153,13 +161,13 @@ class NusTxStatusCallbacks : public BLECharacteristicCallbacks {
 // based arbitration the brief intended.
 class ServerCallbacks : public BLEServerCallbacks {
     void onConnect(BLEServer* server, ble_gap_conn_desc* desc) override {
-        if (g_hasOwner) {
-            // Someone already owns the session. Drop the newcomer rather than
-            // letting two clients interleave commands.
+        if (!sessionOwnerClaim(LinkId::Ble)) {
+            // Someone already owns the session -- another BLE client, or a WiFi
+            // client. Drop the newcomer rather than letting two clients
+            // interleave commands.
             server->disconnect(desc->conn_handle);
             return;
         }
-        g_hasOwner = true;
         g_ownerHandle = desc->conn_handle;
         g_rxBuffer.clear();
     }
@@ -175,14 +183,14 @@ class ServerCallbacks : public BLEServerCallbacks {
         // then seize the session, and the owner's half-typed command is wiped
         // mid-stream. The bench test would still show the newcomer being
         // dropped and look correct.
-        if (!g_hasOwner || desc->conn_handle != g_ownerHandle) {
+        if (!sessionOwnerIs(LinkId::Ble) || desc->conn_handle != g_ownerHandle) {
             // A rejected client going away. Keep advertising so the next one
             // can still find the board, and leave the owner untouched.
             server->startAdvertising();
             return;
         }
 
-        g_hasOwner = false;
+        sessionOwnerRelease(LinkId::Ble);
         g_rxBuffer.clear();
         server->startAdvertising();
     }

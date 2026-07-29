@@ -1,5 +1,6 @@
 #include "link/wifi_link.h"
 #include "elm327/line_buffer.h"
+#include "link/session_owner.h"
 #include "link/write_all.h"
 #include <WiFi.h>
 
@@ -36,13 +37,15 @@ void wifiLinkPoll() {
     if (g_client && !g_client.connected()) {
         g_client.stop();
         g_buffer.reset();
+        sessionOwnerRelease(LinkId::Wifi);
     }
 
     if (WiFiClient incoming = g_server.accept()) {
-        if (g_client && g_client.connected()) {
-            // One session owns the adapter, same arbitration as BLE: two
-            // clients interleaving commands would corrupt both, and silently,
-            // because each reply is a valid reply to *some* request.
+        // Claim decides, not "is a socket already open here": BLE runs at the
+        // same time and may hold the session, and two clients interleaving
+        // commands corrupt both silently, because each reply is a valid reply
+        // to *some* request.
+        if (!sessionOwnerClaim(LinkId::Wifi)) {
             incoming.stop();
         } else {
             g_client = incoming;

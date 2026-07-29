@@ -30,7 +30,7 @@ Five environments:
 | `rejsacan` | The adapter firmware |
 | `rejsacan_bustest` | Listen-only diagnostic build; counts frames against bus errors |
 | `rejsacan_usbscan` | Scan-only build for `tools/did_scan.py`; see "DID scanning" below |
-| `rejsacan_wifi` | The adapter over WiFi instead of BLE; see "WiFi" below |
+| `rejsacan_wifi` | The adapter with WiFi *and* BLE; see "WiFi" below |
 | `native` | Host-side unit tests for the pure-logic units |
 
 ## Architecture
@@ -70,8 +70,8 @@ session; a second connection is dropped immediately.
 
 ## WiFi
 
-`env:rejsacan_wifi` serves the same `Elm327Session` over TCP instead of BLE.
-The board runs its own WPA2 access point and listens on **port 35000** — the
+`env:rejsacan_wifi` is `env:rejsacan` plus a TCP listener — BLE and WiFi both
+serve the same `Elm327Session`. The board runs its own WPA2 access point and listens on **port 35000** — the
 convention every ELM327-over-WiFi clone uses, so SavvyCAN, OBD Fusion and
 `nc 192.168.4.1 35000` all work with no configuration.
 
@@ -87,11 +87,17 @@ only thing between anyone in radio range and the CAN bus of a parked car.
 Station mode (joining an existing network) is not offered: the car is not where
 the house WiFi is, and the credentials would need somewhere to live.
 
-Same one-session arbitration as BLE — a second TCP connection is closed
-immediately. BLE is *not* started in this build: `Elm327Session` is half-duplex
-and holds mutable state, and BLE callbacks run on the NimBLE host task while
-`wifiLinkPoll()` runs in `loop()`, so feeding one session from both would race
-on that state and on the bus. Same reasoning as `link/serial_link.h`.
+**One client across both radios.** `Elm327Session` is half-duplex and stateful,
+and BLE callbacks run on the NimBLE host task while `wifiLinkPoll()` runs in
+`loop()` — so both links may be *up*, but only the client holding the session is
+ever fed to it. Ownership is a single atomic token (`link/session_owner.h`,
+tested under `native`); whoever connects first keeps it until they disconnect,
+and anyone else — same radio or the other one — is dropped at connect. USB CDC
+stays separated at build time: it has no connect/disconnect events to hang a
+claim on.
+
+Not folded into `env:rejsacan`: the WiFi stack costs ~205 kB flash, ~11 kB RAM
+and idle current. Without `-DWIFI_LINK` the linker drops all of it.
 
 ## DID scanning
 
