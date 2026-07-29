@@ -23,13 +23,14 @@ uv sync                       # create .venv from pyproject.toml
 uv run pytest                 # 156 tests for did_scan.py and didscan_core.py
 ```
 
-Four environments:
+Five environments:
 
 | Environment | Purpose |
 |---|---|
 | `rejsacan` | The adapter firmware |
 | `rejsacan_bustest` | Listen-only diagnostic build; counts frames against bus errors |
 | `rejsacan_usbscan` | Scan-only build for `tools/did_scan.py`; see "DID scanning" below |
+| `rejsacan_wifi` | The adapter over WiFi instead of BLE; see "WiFi" below |
 | `native` | Host-side unit tests for the pure-logic units |
 
 ## Architecture
@@ -37,7 +38,7 @@ Four environments:
 ```
 main.cpp    wiring and task startup
 
-link/       BLE: two GATT services, single-session arbitration   hardware
+link/       BLE / USB CDC / WiFi TCP, single-session arbitration    hardware
 can/        TWAI: init, transmit, receive                        hardware
 elm327/     session: request/response over CAN                   hardware
 
@@ -66,6 +67,31 @@ Two GATT services carry the same byte stream:
 the echo/space settings persist between commands — so two concurrent clients
 would interleave replies and corrupt both. The first to connect owns the
 session; a second connection is dropped immediately.
+
+## WiFi
+
+`env:rejsacan_wifi` serves the same `Elm327Session` over TCP instead of BLE.
+The board runs its own WPA2 access point and listens on **port 35000** — the
+convention every ELM327-over-WiFi clone uses, so SavvyCAN, OBD Fusion and
+`nc 192.168.4.1 35000` all work with no configuration.
+
+```sh
+pio run -e rejsacan_wifi -t upload
+# join SSID "RejsaElm", then:
+nc 192.168.4.1 35000
+```
+
+**Change `WIFI_LINK_PASSWORD` in `platformio.ini` before flashing.** It is the
+only thing between anyone in radio range and the CAN bus of a parked car.
+
+Station mode (joining an existing network) is not offered: the car is not where
+the house WiFi is, and the credentials would need somewhere to live.
+
+Same one-session arbitration as BLE — a second TCP connection is closed
+immediately. BLE is *not* started in this build: `Elm327Session` is half-duplex
+and holds mutable state, and BLE callbacks run on the NimBLE host task while
+`wifiLinkPoll()` runs in `loop()`, so feeding one session from both would race
+on that state and on the bus. Same reasoning as `link/serial_link.h`.
 
 ## DID scanning
 

@@ -4,6 +4,7 @@
 #include "elm327/session.h"
 #include "link/ble_link.h"
 #include "link/serial_link.h"
+#include "link/wifi_link.h"
 
 static Elm327Session g_session;
 
@@ -38,6 +39,10 @@ void setup() {
     }
 #  if defined(USB_SERIAL_LINK)
     serialLinkSetLineHandler(onLine);
+#  elif defined(WIFI_LINK)
+    wifiLinkSetLineHandler(onLine);
+    // WPA2, not an open AP: the bus is reachable by anyone who associates.
+    wifiLinkBegin("RejsaElm", WIFI_LINK_PASSWORD);
 #  else
     bleLinkSetLineHandler(onLine);
     bleLinkBegin("RejsaElm");
@@ -63,6 +68,8 @@ void loop() {
 }
 #elif defined(USB_SERIAL_LINK)
 void loop() { serialLinkPoll(); }
+#elif defined(WIFI_LINK)
+void loop() { wifiLinkPoll(); }
 #else
 void loop() { delay(1000); }
 #endif
