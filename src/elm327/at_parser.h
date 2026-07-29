@@ -96,6 +96,7 @@ enum class AtResult {
     DescribeProtocol,        // ATDP  — answer with describeProtocol(state)
     DescribeProtocolNumber,  // ATDPN — answer with describeProtocolNumber(state)
     BufferDump,  // ATBD — answer with formatBufferDump(state)
+    NoData,  // answer "NO DATA"
 };
 
 bool isAtCommand(const char* line);

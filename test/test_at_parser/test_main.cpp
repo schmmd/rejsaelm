@@ -183,6 +183,30 @@ void test_unknown_command_reports_unknown() {
     TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATXYZZY", s));
 }
 
+void test_monitor_commands_report_no_data_until_phase_four() {
+    AdapterState s;
+    // Streaming monitor modes arrive in phase 4. Until then answer at once
+    // rather than making the client wait out a timeout. NO DATA is the
+    // honest answer: nothing was captured.
+    TEST_ASSERT_EQUAL(AtResult::NoData, applyAtCommand("ATMA", s));
+    TEST_ASSERT_EQUAL(AtResult::NoData, applyAtCommand("ATMR 7E8", s));
+    TEST_ASSERT_EQUAL(AtResult::NoData, applyAtCommand("ATMT 7E0", s));
+}
+
+void test_protocol_close_is_accepted() {
+    AdapterState s;
+    TEST_ASSERT_EQUAL(AtResult::Ok, applyAtCommand("ATPC", s));
+}
+
+void test_j1939_monitor_commands_are_not_swallowed_by_the_can_monitor_stubs() {
+    // ATMP (monitor for PGN) and ATDM1 are J1939 commands deferred to a later
+    // phase. ATMP shares the "ATM" prefix with ATMA/ATMR/ATMT, which answer
+    // NO DATA — pin that ATMP falls through to Unknown instead of being
+    // swallowed by that match.
+    AdapterState s;
+    TEST_ASSERT_EQUAL(AtResult::Unknown, applyAtCommand("ATMP1234", s));
+}
+
 void test_harmless_commands_are_accepted_without_effect() {
     // Adaptive timing, flow control, and the CAN filter/mask commands: we
     // always do the right thing internally, so accept and ignore rather than
@@ -355,6 +379,9 @@ int main(int, char**) {
     RUN_TEST(test_auto_selected_protocol_is_reported_as_auto);
     RUN_TEST(test_identify_and_voltage_are_distinct_results);
     RUN_TEST(test_unknown_command_reports_unknown);
+    RUN_TEST(test_monitor_commands_report_no_data_until_phase_four);
+    RUN_TEST(test_protocol_close_is_accepted);
+    RUN_TEST(test_j1939_monitor_commands_are_not_swallowed_by_the_can_monitor_stubs);
     RUN_TEST(test_harmless_commands_are_accepted_without_effect);
     RUN_TEST(test_device_identifier_round_trips_verbatim);
     RUN_TEST(test_device_description_is_not_the_version_banner);

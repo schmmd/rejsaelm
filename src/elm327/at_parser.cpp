@@ -172,6 +172,19 @@ AtResult applyAtCommand(const char* line, AdapterState& state) {
         return AtResult::Ok;
     }
 
+    if (s == "ATPC") return AtResult::Ok;
+
+    // Monitor modes stream frames until interrupted, which the session cannot
+    // do yet — handleLine() is strictly request/reply/prompt. Phase 4 builds
+    // the streaming path and these become real. Answer immediately meanwhile.
+    // Must come after the ATM0/ATM1 entries above, or those would never be
+    // reached. Matched by exact/4-char prefix rather than a bare "ATM" prefix
+    // so J1939's ATMP (monitor for PGN) is not swallowed here — it is a
+    // deferred command that must still fall through to Unknown below.
+    if (s == "ATMA" || startsWith(s, "ATMR") || startsWith(s, "ATMT")) {
+        return AtResult::NoData;
+    }
+
     return AtResult::Unknown;
 }
 
