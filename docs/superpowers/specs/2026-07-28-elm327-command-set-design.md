@@ -7,6 +7,12 @@ This closes the gap as far as the hardware allows, so that a generic OBD app —
 not just this project's Android client — completes its handshake and gets
 truthful answers.
 
+**The target is a general-purpose adapter.** The IONIQ 5 is the vehicle on hand,
+not the design centre. Where a decision could be made either for that car or for
+any car, this document takes the general option, and a limitation observed on
+that one vehicle is not treated as a limitation of the board. The README already
+states this intent for the firmware as a whole; it applies here too.
+
 ## What "full" can mean on this board
 
 RejsaCAN has a CAN transceiver and nothing else. Protocols 1–5 (J1850 PWM,
@@ -40,14 +46,10 @@ are all unchanged. If a formatter test moves during this work, that is a bug.
 their own command grammar, and a reputation for bricking clones when set wrong.
 Nothing on either side of this project reads them.
 
-**`ATMA`/`ATMR`/`ATMT` monitor modes.** Implementable, but the bus test recorded
-zero frames through the car's gateway — this would be a correct implementation
-of a feature that returns nothing forever. They answer `NO DATA` immediately,
-with the reason in a comment, rather than making a client wait out a timeout.
-
-**J1939 helpers (`ATJE`, `ATJS`, `ATJHF`).** Protocol A is CAN 29/250 and so is
-electrically reachable, but this is a passenger car. `ATSPA` is accepted in
-phase 3; the helper commands answer `?`.
+Monitor modes and J1939 were both cut in an earlier draft and are now in scope,
+as phase 4. The goal is a generally useful adapter, not one shaped around a
+single car — and the gateway that makes monitoring useless *here* is a property
+of this vehicle, not of the board.
 
 ## Phase 1 — pure logic
 
@@ -69,7 +71,8 @@ runs under `env:native`, which is the point: no hardware needed to prove it.
 | `@2` | Device identifier, empty until set |
 | `@3 cccccccccccc` | Set the identifier. RAM only for now; moves to NVS in phase 2 |
 | `ATAL` / `ATNL` | Allow/disallow long messages. **Stored, not honoured** — `runRequest()` only builds single frames, so multi-frame transmit does not exist to enable |
-| `ATIB`, `ATFI`, `ATSI`, `ATKW`, `ATBI`, `ATSW`, `ATWM`, `ATSP1`–`ATSP5`, `ATJE`, `ATJS`, `ATJHF` | `?` |
+| `ATMA`, `ATMR hh`, `ATMT hh` | Interim: immediate `NO DATA`, so a client is not left waiting out a timeout. Becomes real in phase 4 |
+| `ATIB`, `ATFI`, `ATSI`, `ATKW`, `ATBI`, `ATSW`, `ATWM`, `ATSP1`–`ATSP5` | `?` |
 
 `@1` currently maps to `AtResult::Identify` and returns the `ATI` version
 banner. That is wrong — `@1` is a device description, distinct from `ATI` — and
@@ -121,6 +124,75 @@ The largest phase, and the only one that touches `session.cpp` structurally.
 - **`ATAT 0/1/2`** adaptive timing, replacing the fixed `state_.timeoutMs`
   deadline.
 
+## Phase 4 — streaming, monitor modes, J1939
+
+Depends on phase 3: J1939 is ELM327 protocol A, which is CAN at 250 kbit/s with
+29-bit IDs, so it reuses the bit-rate switching and extended addressing built
+there rather than introducing them.
+
+### 4a — streaming
+
+The prerequisite for everything else in this phase, and the only structural
+change to the session.
+
+`handleLine()` is strictly request → reply → prompt. Monitoring is
+reply-until-cancelled: frames stream out as they arrive, and any byte received
+from the client aborts and returns the prompt. That means a monitor mode cannot
+be a return value from `handleLine()` — it needs a session state the link layer
+pumps, plus a cancellation path from the link back into the session.
+
+Once that exists, `ATMA`, `ATMR hh` and `ATMT hh` become real, replacing their
+phase 1 stubs.
+
+On the IONIQ 5 these will emit nothing, because its gateway does not bridge
+broadcast traffic to the OBD port. That is a fact about that car. On a vehicle
+without a consumer gateway — including any J1939 machine — the same code is the
+primary way the bus is read.
+
+### 4b — J1939 addressing
+
+A 29-bit J1939 identifier decomposes into 3 bits priority, 1 reserved, 1 data
+page, 8 bits PDU Format, 8 bits PDU Specific, 8 bits source address. The PGN
+derivation is conditional and is the part implementations most often get wrong:
+
+- **PF < 240 (PDU1)** — destination-specific. PS *is* the destination address,
+  and the PGN is `PF << 8`.
+- **PF ≥ 240 (PDU2)** — broadcast. PS is a group extension, and the PGN is
+  `(PF << 8) | PS`.
+
+This is pure logic and belongs under `env:native` with the other decoders.
+
+| Command | Behaviour |
+|---|---|
+| `ATJE` | ELM data format — request bytes in the order given. Default |
+| `ATJS` | SAE data format — reverses PGN byte order to match how SAE prints it |
+| `ATJHF0` / `ATJHF1` | Header formatting off/on: raw header, or decoded into priority / PGN / source address |
+| `ATJTM1` / `ATJTM5` | Timer multiplier 1× or 5×, for the slower J1939 transport transfers |
+| `ATMP hhhh` / `ATMP hhhh n` | Monitor for a PGN. Needs 4a |
+| `ATDM1` | Monitor for DM1, the broadcast active-fault-code message. A PGN 65226 filter over `ATMP`; no DTC decoding — frames are emitted in the normal format |
+
+### 4c — J1939 transport protocol
+
+Messages over 8 bytes use J1939's own transport, not ISO-TP. Two modes:
+
+- **BAM** — `TP.CM_BAM` (PGN 60416) announces size and frame count, then
+  `TP.DT` (PGN 60160) frames follow with no flow control.
+- **RTS/CTS** — destination-specific, with CTS frames pacing the sender.
+
+This is a second reassembler beside `IsoTpReassembler`, and deliberately the
+same shape: offer frames, collect, report complete. It carries no hardware
+dependency, so it is host-testable exactly like the existing one — which is the
+strongest argument that this phase fits the codebase rather than fighting it.
+
+### Verifying it
+
+Phase 4 cannot be tested on the IONIQ 5 at all. The reassembler and the
+addressing decode are host-testable and should carry the weight. Beyond that,
+verification needs either a J1939 bench source — a second CAN node replaying a
+logged capture — or access to a truck. Note this in
+`tools/bringup_checklist.md` rather than letting the phase look verifiable when
+it is not.
+
 ## Risks
 
 **Protocol switching is the one that can break a working adapter.** Phases 1 and
@@ -131,6 +203,16 @@ plausible wrong value." The 11-bit path must keep working byte-for-byte while
 29-bit support is added beside it, which argues for pinning the existing
 correlation behaviour in host tests before touching it.
 
+**Streaming is the other one.** Phase 4a puts the session into a state where it
+emits without being asked, and the link layer must be able to interrupt it. The
+BLE link already drops a second connection to keep one session authoritative;
+a monitor mode that ignores its cancellation path would hold that session open
+indefinitely, and the only recovery would be a power cycle in a parked car.
+Cancellation is the load-bearing part of 4a, not the streaming.
+
 **Nothing here is verified on a vehicle**, consistent with the rest of the
-project's known gaps. Phase 1 is fully covered by host tests. Phases 2 and 3
-are not, and their entries belong in `tools/bringup_checklist.md`.
+project's known gaps. Phase 1 is fully covered by host tests, as are the J1939
+addressing decode and transport reassembler in phase 4. Phases 2, 3 and the
+monitor modes are not, and their entries belong in
+`tools/bringup_checklist.md`. Phase 4 additionally cannot be exercised on the
+vehicle on hand at all — see above.
